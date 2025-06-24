@@ -1,4 +1,4 @@
-// Login Route (with MongoDB user)
+// ✅ Login Route (with correct password comparison)
 app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
   
@@ -21,8 +21,12 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
   
-    console.log('Login successful'); // Debugging log
-    const token = "your_jwt_token_here"; // Generate token
+    console.log('✅ Login successful');
+    
+    // Generate a JWT token
+    const token = jwt.sign({ userId: user._id, email: user.email }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
+
     return res.json({ message: "Login successful", token });
-  });
-  
+});

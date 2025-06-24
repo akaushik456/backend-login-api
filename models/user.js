@@ -1,13 +1,15 @@
-// models/user.js
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
+const bcrypt = require("bcrypt");
 
-// Define the User schema
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
 });
 
-// Create the User model
-const User = mongoose.model('User', userSchema);
+// ✅ Method to compare password
+userSchema.methods.matchPassword = async function (enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
 
+const User = mongoose.model("User", userSchema);
 module.exports = User;

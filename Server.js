@@ -1,132 +1,146 @@
+require("dotenv").config();
 const express = require("express");
-const session = require("express-session");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt"); // For password hashing
-const User = require("./models/user"); // Import User model
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
+const User = require("./models/user");
 
 const app = express();
+const SECRET_KEY = process.env.JWT_SECRET || "fallback_secret";
 
-// MongoDB Connection
-mongoose
-  .connect("mongodb://localhost:27017/your-database", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
-
-// Middleware
-app.use(
-  cors({
-    origin: "http://localhost:5174", // Frontend URL
-    credentials: true,
-  })
-);
+// ✅ Middleware
 app.use(express.json());
+// app.use(cors({ origin: "http://localhost:5173", credentials: true }));
+app.use(cors());
 
-// Session setup
-app.use(
-  session({
-    secret: "your-secret-key",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: false, // Change to true in production with HTTPS
-      httpOnly: true,
-    },
-  })
-);
+// ✅ MongoDB Connection
+mongoose.connect("mongodb://localhost:27017/your-database", {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}).then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// Root Route
+// ✅ Root Route (Fixes Cannot GET /)
 app.get("/", (req, res) => {
   res.send("🚀 Server is running!");
 });
 
-// ✅ **User Registration (Signup)**
+// ✅ Rate Limiter
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many login attempts, try again later."
+});
+
+// ✅ JWT Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  const token = req.header("Authorization")?.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.status(403).json({ message: "Invalid token" });
+    req.user = user;
+    next();
+  });
+};
+
+// ✅ Register API
 app.post("/api/auth/register", async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
-  }
-
-  if (password.length < 6 || !/\d/.test(password)) {
-    return res.status(400).json({
-      message: "Password must be at least 6 characters and contain a number.",
-    });
-  }
+  console.log("📥 Register Request Received:", req.body); // Debugging
 
   try {
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      console.log("⚠️ Missing fields:", { name, email, password });
+      return res.status(400).json({ message: "All fields are required." });
     }
 
-    // Hash password before saving
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = new User({ email, password: hashedPassword });
-    await newUser.save();
+    console.log("🔍 Checking if user already exists...");
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
 
-    res.status(201).json({ message: "User registered successfully" });
+    if (existingUser) {
+      console.log("⚠️ User already exists:", existingUser.email);
+      return res.status(400).json({ message: "User already exists." });
+    }
+
+    console.log("🔐 Hashing password...");
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    console.log("🆕 Creating new user...");
+    const newUser = new User({
+      name,
+      email: email.toLowerCase().trim(),
+      password: hashedPassword,
+    });
+
+    await newUser.save();
+    console.log("✅ User saved successfully!");
+
+    const token = jwt.sign({ userId: newUser._id, email: newUser.email }, SECRET_KEY, { expiresIn: "1h" });
+
+    res.status(201).json({ message: "User registered successfully!", token });
+
   } catch (error) {
-    console.error("❌ Registration Error:", error);
-    res.status(500).json({ message: "Failed to register user" });
+    console.error("❌ Register Error:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 });
 
-// ✅ **User Login**
-app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
-  }
 
+// ✅ Login API
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
+  console.log("📥 Login Request Body:", req.body); // Debugging
+  
   try {
-    // Find user by email
-    const user = await User.findOne({ email });
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required." });
+    }
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return res.status(400).json({ message: "Invalid credentials." });
     }
 
-    // Check password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid email or password" });
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      return res.status(400).json({ message: "Invalid credentials." });
     }
 
-    // Store user session
-    req.session.user = { email: user.email };
+    const token = jwt.sign({ userId: user._id, email: user.email }, SECRET_KEY, { expiresIn: "1h" });
 
-    res.json({ message: "Login successful", token: "dummy-token" });
+    res.json({ message: "Login successful!", token });
+
   } catch (error) {
     console.error("❌ Login Error:", error);
-    res.status(500).json({ message: "Internal Server Error" });
+    res.status(500).json({ message: "Internal server error." });
   }
 });
 
-// ✅ **Check Session**
-app.get("/api/auth/check-session", (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-  res.json({ message: "Session active", user: req.session.user });
-});
 
-// ✅ **Logout**
+// ✅ Logout API
 app.post("/api/auth/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ message: "Failed to log out" });
-    }
-    res.clearCookie("connect.sid");
-    res.json({ message: "Logout successful" });
-  });
+  try {
+    res.clearCookie("token"); // If using cookies
+    res.json({ message: "Logout successful!" });
+  } catch (error) {
+    console.error("❌ Logout Error:", error);
+    res.status(500).json({ message: "Internal server error." });
+  }
 });
 
-// Start Server
-app.listen(5000, () => {
-  console.log("🚀 Server running on http://localhost:5000");
+
+// ✅ Check Session API
+app.get("/api/auth/check-session", authenticateToken, (req, res) => {
+  res.json({ message: "Session active", user: req.user });
+});
+
+// ✅ Start Server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
