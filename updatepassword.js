@@ -1,6 +1,6 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const User = require("./models/user"); // Adjust path if needed
 
 mongoose.connect("mongodb://localhost:27017/your-database", {
