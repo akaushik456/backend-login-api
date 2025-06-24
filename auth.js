@@ -1,6 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const User = require('../models/User'); // Assuming you have a User model
+const User = require('/models/User'); // Assuming you have a User model
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
 const app = express();
